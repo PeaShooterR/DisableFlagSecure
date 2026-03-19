@@ -3,8 +3,11 @@ Enabling screenshots in apps that normally wouldn\'t allow it, and disabling scr
 
 **Unofficial LSPosed versions are not supported.**
 
+## Difference from the upstream version
+- Supports Android 11, for my personal use.
+
 ## Supported OSes
-- Android 12-16 (Custom ROMs are **not** supported)
+- Android 8.1-16 Beta 2 (Custom ROMs are **not** supported)
 - Xiaomi Hyper OS
 - OPlus OS (Color OS/Realme UI/Oxygen OS)
 - Samsung One UI
