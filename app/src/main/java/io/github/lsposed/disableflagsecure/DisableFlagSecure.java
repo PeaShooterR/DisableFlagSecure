@@ -13,6 +13,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.RequiresApi;
 
 import java.lang.reflect.Executable;
+import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
@@ -80,14 +81,16 @@ public class DisableFlagSecure extends XposedModule {
             }
         }
 
-        // ScreenCapture in WindowManagerService (S~Baklava)
-        try {
-            hookScreenCapture(classLoader);
-        } catch (Throwable t) {
-            log(Log.ERROR, TAG, "hook ScreenCapture failed", t);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // ScreenCapture in WindowManagerService (S~Baklava)
+            try {
+                hookScreenCapture(classLoader);
+            } catch (Throwable t) {
+                log(Log.ERROR, TAG, "hook ScreenCapture failed", t);
+            }
         }
 
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             // Blackout permission check (S~T)
             try {
                 hookActivityManagerService(classLoader);
@@ -96,33 +99,35 @@ public class DisableFlagSecure extends XposedModule {
             }
         }
 
-        // WifiDisplay (S~Baklava) / OverlayDisplay (S~Baklava) / VirtualDisplay (U~Baklava)
-        try {
-            hookDisplayControl(classLoader);
-        } catch (Throwable t) {
-            log(Log.ERROR, TAG, "hook DisplayControl failed", t);
-        }
-
-        // VirtualDisplay with MediaProjection (S~Baklava)
-        try {
-            hookVirtualDisplayAdapter(classLoader);
-        } catch (Throwable t) {
-            log(Log.ERROR, TAG, "hook VirtualDisplayAdapter failed", t);
-        }
-
-        // OneUI
-        try {
-            hookScreenshotHardwareBuffer(classLoader);
-        } catch (Throwable t) {
-            if (!(t instanceof ClassNotFoundException)) {
-                log(Log.ERROR, TAG, "hook ScreenshotHardwareBuffer failed", t);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // WifiDisplay (S~Baklava) / OverlayDisplay (S~Baklava) / VirtualDisplay (U~Baklava)
+            try {
+                hookDisplayControl(classLoader);
+            } catch (Throwable t) {
+                log(Log.ERROR, TAG, "hook DisplayControl failed", t);
             }
-        }
-        try {
-            hookOneUI(classLoader);
-        } catch (Throwable t) {
-            if (!(t instanceof ClassNotFoundException)) {
-                log(Log.ERROR, TAG, "hook OneUI failed", t);
+
+            // VirtualDisplay with MediaProjection (S~Baklava)
+            try {
+                hookVirtualDisplayAdapter(classLoader);
+            } catch (Throwable t) {
+                log(Log.ERROR, TAG, "hook VirtualDisplayAdapter failed", t);
+            }
+
+            // OneUI
+            try {
+                hookScreenshotHardwareBuffer(classLoader);
+            } catch (Throwable t) {
+                if (!(t instanceof ClassNotFoundException)) {
+                    log(Log.ERROR, TAG, "hook ScreenshotHardwareBuffer failed", t);
+                }
+            }
+            try {
+                hookOneUI(classLoader);
+            } catch (Throwable t) {
+                if (!(t instanceof ClassNotFoundException)) {
+                    log(Log.ERROR, TAG, "hook OneUI failed", t);
+                }
             }
         }
 
@@ -173,11 +178,13 @@ public class DisableFlagSecure extends XposedModule {
             case OPLUS_APPPLATFORM:
                 // Flyme SystemUI Ext 10.3.0
                 // OPlus AppPlatform 13.1.0 / 14.0.0
-                try {
-                    hookScreenshotHardwareBuffer(classLoader);
-                } catch (Throwable t) {
-                    if (!(t instanceof ClassNotFoundException)) {
-                        log(Log.ERROR, TAG, "hook ScreenshotHardwareBuffer failed", t);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    try {
+                        hookScreenshotHardwareBuffer(classLoader);
+                    } catch (Throwable t) {
+                        if (!(t instanceof ClassNotFoundException)) {
+                            log(Log.ERROR, TAG, "hook ScreenshotHardwareBuffer failed", t);
+                        }
                     }
                 }
             case SYSTEMUI:
@@ -186,10 +193,12 @@ public class DisableFlagSecure extends XposedModule {
                         Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                     // ScreenCapture in App (S~T) (OPlus S~V)
                     // TODO: test Oplus Baklava
-                    try {
-                        hookScreenCapture(classLoader);
-                    } catch (Throwable t) {
-                        log(Log.ERROR, TAG, "hook ScreenCapture failed", t);
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        try {
+                            hookScreenCapture(classLoader);
+                        } catch (Throwable t) {
+                            log(Log.ERROR, TAG, "hook ScreenCapture failed", t);
+                        }
                     }
                 }
                 break;
@@ -268,27 +277,39 @@ public class DisableFlagSecure extends XposedModule {
     private void hookWindowState(ClassLoader classLoader) throws ClassNotFoundException, NoSuchMethodException {
         var windowStateClazz = classLoader.loadClass("com.android.server.wm.WindowState");
         var systemServerCl = windowStateClazz.getClassLoader();
-        var isSecureLockedMethod = windowStateClazz.getDeclaredMethod("isSecureLocked");
+        Method isSecureLockedMethod;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            isSecureLockedMethod = windowStateClazz.getDeclaredMethod("isSecureLocked");
+        } else {
+            var windowManagerServiceClazz = classLoader.loadClass("com.android.server.wm.WindowManagerService");
+            isSecureLockedMethod = windowManagerServiceClazz.getDeclaredMethod("isSecureLocked", windowStateClazz);
+        }
         hookE(isSecureLockedMethod).intercept(chain -> {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                var walker = StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE);
-                var match = walker.walk(frames -> frames
-                        .anyMatch(frame -> frame.getDeclaringClass() != null &&
-                                frame.getDeclaringClass().getClassLoader() == systemServerCl &&
-                                (frame.getMethodName().equals("setInitialSurfaceControlProperties") ||
-                                        frame.getMethodName().equals("createSurfaceLocked"))));
-                if (match) return chain.proceed();
-            } else {
-                var stackTrace = new Throwable().getStackTrace();
-                for (var frame : stackTrace) {
-                    var name = frame.getMethodName();
-                    try {
-                        if ((name.equals("setInitialSurfaceControlProperties") ||
-                                name.equals("createSurfaceLocked")) &&
-                                classLoader.loadClass(frame.getClassName()).getClassLoader() == systemServerCl) {
-                            return chain.proceed();
+            // Android 12+ still needs the secure surface flag so that protected content can
+            // be captured through the newer ScreenCapture hooks. On Android 11 and below,
+            // keeping that flag makes a newly-created surface secure again after an Activity
+            // recreation, so isSecureLocked must consistently report false there.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    var walker = StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE);
+                    var match = walker.walk(frames -> frames
+                            .anyMatch(frame -> frame.getDeclaringClass() != null &&
+                                    frame.getDeclaringClass().getClassLoader() == systemServerCl &&
+                                    (frame.getMethodName().equals("setInitialSurfaceControlProperties") ||
+                                            frame.getMethodName().equals("createSurfaceLocked"))));
+                    if (match) return chain.proceed();
+                } else {
+                    var stackTrace = new Throwable().getStackTrace();
+                    for (var frame : stackTrace) {
+                        var name = frame.getMethodName();
+                        try {
+                            if ((name.equals("setInitialSurfaceControlProperties") ||
+                                    name.equals("createSurfaceLocked")) &&
+                                    classLoader.loadClass(frame.getClassName()).getClassLoader() == systemServerCl) {
+                                return chain.proceed();
+                            }
+                        } catch (ClassNotFoundException ignored) {
                         }
-                    } catch (ClassNotFoundException ignored) {
                     }
                 }
             }
